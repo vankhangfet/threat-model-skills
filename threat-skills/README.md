@@ -185,6 +185,37 @@ python3 $T stats   threat-model/x.json      # counts + share of AI-proposed thre
 `stats` reads the `.draft-log.json` file to measure the quality of the AI draft (kept / rejected / added by
 humans), which supports pilot evaluation.
 
+## About OWASP Threat Dragon
+
+[OWASP Threat Dragon](https://owasp.org/projects/threat-dragon) is a free, open-source (Apache 2.0),
+cross-platform threat modeling tool with OWASP Production status. You draw data flow diagrams and list threats
+and mitigations for each element. Source code: [github.com/OWASP/threat-dragon](https://github.com/OWASP/threat-dragon).
+Documentation: [owasp.org/www-project-threat-dragon](https://owasp.org/www-project-threat-dragon/).
+
+These skills draft the model; Threat Dragon is where the team reviews it. Ways to open the generated
+`threat-model/<slug>.json`:
+
+| Option | Storage | Use it when |
+|---|---|---|
+| Desktop app (Windows, macOS, Linux installers from the [GitHub releases](https://github.com/OWASP/threat-dragon/releases)) | Local files only | You want the quickest start: open the JSON file directly. |
+| Web app, hosted demo or self-hosted | Local filesystem, or GitHub / GitLab / Bitbucket / GitHub Enterprise when configured | The team reviews models stored in the project repo. |
+| Docker image `threatdragon/owasp-threat-dragon:stable` | Same as the web app | You self-host the web app. |
+
+Quick self-hosted run (the web app needs environment variables and, for repository access, a registered
+OAuth app; see the Threat Dragon docs):
+
+```bash
+docker run -it --rm -p 8080:3000 -v $(pwd)/.env:/app/.env threatdragon/owasp-threat-dragon:stable
+# then open http://localhost:8080/
+```
+
+Review steps in Threat Dragon:
+
+1. Open the generated model (desktop: *Open existing threat model*; web: select the repo and the file).
+2. Check the diagram: elements, data flows and trust boundaries. Drag elements to tidy the layout.
+3. Go through each threat. Edit it, delete it, or add missing ones.
+4. Set the final status of each threat (Open, Mitigated, Accepted, and so on) and write the mitigation.
+5. Save, commit the JSON file, then run `threat-to-requirements`.
 ## Notes on Threat Dragon
 
 - The model is stored in `threat-model/` in the repo. Configure Threat Dragon (web version) to connect to
