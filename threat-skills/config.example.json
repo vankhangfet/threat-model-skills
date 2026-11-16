@@ -1,0 +1,8 @@
+﻿{
+  "modelDir": "threat-model",
+  "requirementsFile": "SECURITY-REQUIREMENTS.md",
+  "language": "en",
+  "baseBranch": "main",
+  "agentRulesFiles": ["AGENTS.md", "CLAUDE.md"],
+  "backlogCsv": false
+}
