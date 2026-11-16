@@ -21,6 +21,7 @@ Claude Code, OpenCode, Cline, Codex, Cursor, GitHub Copilot, and other agents th
 8. [tdtool.py: manual use](#tdtoolpy-manual-use)
 9. [About OWASP Threat Dragon](#about-owasp-threat-dragon)
 10. [Notes on Threat Dragon](#notes-on-threat-dragon)
+11. [License](#license)
 ## Workflow
 
 ```
@@ -236,3 +237,7 @@ Review steps in Threat Dragon:
   statuses require a recent Threat Dragon 2.x. Deploy the latest version (v2.6.2 at the time of writing).
 - The first time you open an AI-generated model, the diagram is laid out in columns (one column per trust
   boundary). The reviewer only needs to drag elements into a more readable arrangement.
+
+## License
+
+[MIT](LICENSE). OWASP Threat Dragon is a separate project under the Apache 2.0 license.
