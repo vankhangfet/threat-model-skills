@@ -9,6 +9,18 @@ Claude Code, OpenCode, Cline, Codex, Cursor, GitHub Copilot, and other agents th
 | `threat-to-requirements` | Turns a reviewed threat model into security requirements with IDs, rules for coding agents, and a backlog | `SECURITY-REQUIREMENTS.md`, a block in `AGENTS.md`/`CLAUDE.md`, `backlog.csv` (optional) |
 | `threat-check` | Compares a diff (MR/PR/branch) against the threat model and requirements: coverage, regression, drift | Markdown report (for local use or CI) |
 
+## Table of contents
+
+1. [Workflow](#workflow)
+2. [Why it works with many agents](#why-it-works-with-many-agents)
+3. [Quick start](#quick-start)
+4. [Installer reference](#installer-reference)
+5. [Configuration (optional)](#configuration-optional)
+6. [How to invoke](#how-to-invoke)
+7. [Using threat-check in CI](#using-threat-check-in-ci)
+8. [tdtool.py: manual use](#tdtoolpy-manual-use)
+9. [About OWASP Threat Dragon](#about-owasp-threat-dragon)
+10. [Notes on Threat Dragon](#notes-on-threat-dragon)
 ## Workflow
 
 ```
