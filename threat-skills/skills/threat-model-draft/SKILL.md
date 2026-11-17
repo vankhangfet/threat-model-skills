@@ -15,6 +15,18 @@ You do not write Threat Dragon's diagram JSON by hand. You write a small, readab
 (layout, ports, styles, numbering). This keeps the output correct whatever agent or model
 runs this skill.
 
+## Stable IDs
+
+Threat IDs (`T-001`, `T-002`, ...) are the contract that later skills and CI checks cite
+("violates T-014"). They only work if they never move, so:
+
+- The model file is **committed to the repo** and is the source of truth. Do not regenerate it.
+- `build` creates a model once and refuses to overwrite an existing one (`--force` renumbers; avoid it).
+- `extend` only appends: new threats get the next free number, existing numbers are never changed,
+  reused or compacted. Deleted threats leave a gap on purpose.
+- Before opening a PR that changes the model, run `tdtool.py diff <model> --base origin/<baseBranch>`;
+  it must report no violations.
+
 ## Conventions
 
 - Model folder: `threat-model/` at the repo root (override in `threat-model/config.json`

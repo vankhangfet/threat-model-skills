@@ -14,6 +14,21 @@ Compare a change with the reviewed threat model and the requirements derived fro
 3. **Obvious security smells in the diff** — a short list only; this is not a replacement for SAST,
    dependency scanning or a pentest.
 
+## Stable IDs: the contract
+
+The threat model is a **versioned file in the repo**, reviewed by humans and committed. It is the fixed
+baseline this check compares against. Therefore:
+
+- **Never regenerate or rebuild the model here.** Read it as it is on the branch. If it is missing or
+  stale, say so and recommend threat-model-draft (update mode). Do not run `build`.
+- **Cite pinned IDs, not impressions.** Every finding names the threat (`T-014`) and/or requirement
+  (`SR-007`) it relates to, taken from `extract` output or `SECURITY-REQUIREMENTS.md`. Write
+  "violates T-014 / SR-007: no ownership check in `orders.py:88`", never "possible access control issue".
+- **Never invent an ID.** A finding that matches no threat is reported as *drift* (new surface) or a
+  *smell*, with "no matching threat", and a suggestion to add one via update mode (the tool assigns the next ID).
+- **IDs must stay pinned.** Threat numbers are never renumbered or reused. The `diff` command below
+  checks this between the base branch and the change; a violation is a finding in itself.
+
 The report informs a human reviewer. It does not approve or block on its own, and it never changes
 threat statuses without a person agreeing.
 
@@ -50,6 +65,18 @@ suggestion to run the threat-model-draft skill. If there is a model but no requi
 directly against the mitigation text of `Open` and `Mitigated` threats and recommend running
 threat-to-requirements.
 
+### 2b. Check the model's ID integrity
+If the change touches `threat-model/*.json`, compare it with the base branch:
+```bash
+python3 <skill-dir>/scripts/tdtool.py diff threat-model/<slug>.json --base origin/<baseBranch>
+```
+- **Violations** (exit code 1): an ID now describes a different threat, a new threat reuses an old ID,
+  duplicate numbers, or `threatTop` went down. Report each as a finding; verdict is *Needs attention*.
+- **Warnings**: threats or elements removed. Humans may do this on purpose; ask the reviewer to confirm.
+- **Status changes** (e.g. `T-004 Open -> Mitigated`): list them in the report so the reviewer can
+  check there is code and a test behind the change.
+If the model is not touched by the change, skip this step.
+
 ### 3. Map changed code to model elements
 For each changed file, decide which elements and flows it implements, using element names and
 descriptions, the *Applies to* lines of the requirements, and the code itself (routes, clients,
@@ -73,8 +100,9 @@ it implies (new element/flow/boundary, likely STRIDE threats). Keep the smell li
 
 ### 6. Write the report
 Use `assets/report-template.md`. Verdict:
-- **Needs attention** — any Missing/Regressed control linked to a High or Critical threat, or drift
-  that adds a trust boundary, a new external party, or a new kind of sensitive data.
+- **Needs attention** — any Missing/Regressed control linked to a High or Critical threat, drift
+  that adds a trust boundary, a new external party, or a new kind of sensitive data, or a threat-ID
+  integrity violation from step 2b.
 - **OK with notes** — Partial/Missing on Medium/Low, minor drift, or Not verifiable items.
 - **OK** — everything in scope is implemented and tested, no drift.
 
@@ -87,4 +115,5 @@ if the user wants a file. CI: write it to the path the pipeline gives (default
   `python3 <skill-dir>/scripts/tdtool.py set-status threat-model/<slug>.json --threat T-004 --status Mitigated --note "MR !123, tests/test_audit.py"`.
   Run them only if the user explicitly agrees, then suggest re-running threat-to-requirements to
   sync SR statuses. In CI, only list them.
-- Drift: suggest running threat-model-draft in update mode with the items you found.
+- Drift: suggest running threat-model-draft in update mode with the items you found. New threats get
+  the next free IDs from the tool; do not pick IDs yourself.

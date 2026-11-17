@@ -6,7 +6,9 @@ Pure Python standard library (3.8+), no install needed, so any coding agent
 (Claude Code, OpenCode, Cline, Codex, Cursor, ...) or a CI job can run it.
 
 Commands
-  build    SPEC OUT              Build a new Threat Dragon model from a draft spec (JSON).
+  build    SPEC OUT [--force]    Build a NEW Threat Dragon model from a draft spec (JSON).
+                                 Refuses to overwrite an existing model (ids must stay pinned);
+                                 use extend to add to a model.
   extend   MODEL DELTA [-o OUT]  Add elements/flows/threats from a delta spec to an existing
                                  model without touching anything a human already edited.
   validate MODEL [--fix]         Check structure, enums, references; --fix repairs derived
@@ -15,6 +17,11 @@ Commands
                                  Flatten the model: elements, flows and threats with T-ids.
   set-status MODEL --threat T-12 --status Mitigated [--note TEXT]
                                  Change one threat's status (and append a dated note).
+  diff     NEW [OLD] [--base GITREF] [--format md|json] [--strict]
+                                 Compare two versions of a model by pinned threat id (T-nnn): added,
+                                 removed, status/severity changes, and identity violations (an id that
+                                 was reused for a different threat, threatTop that went down).
+                                 Exit 1 on violations; use it in CI to protect the model's stable ids.
   stats    MODEL [--draft-log FILE]
                                  Counts by status/severity and, with a draft log, how many
                                  AI-drafted threats were kept / rejected / added by humans.
@@ -385,6 +392,9 @@ def stride_warnings(td_type, category, label):
 
 
 def cmd_build(args):
+    if os.path.exists(args.out) and not args.force:
+        raise ToolError("%s already exists. Rebuilding would renumber threats and discard reviewer edits; "
+                        "use 'extend' to add to it, or pass --force to overwrite deliberately." % args.out)
     spec = load_json(args.spec)
     check_spec(spec)
     cells, warnings = [], []
@@ -787,6 +797,119 @@ def cmd_set_status(args):
     print("OK: %s '%s' %s -> %s" % (tid(n), t.get("title"), old, status))
 
 
+# ---------------------------------------------------------------- diff (id integrity)
+def _git_show(ref, path):
+    import subprocess
+    d = os.path.dirname(os.path.abspath(path))
+    r = subprocess.run(["git", "-C", d, "show", "%s:./%s" % (ref, os.path.basename(path))],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if r.returncode != 0:
+        return None
+    return json.loads(r.stdout.decode("utf-8"))
+
+
+def compare_models(old, new):
+    """Compare two Threat Dragon models by pinned threat number. Pure function, no I/O."""
+    fo, fn = flatten(old), flatten(new)
+    to = {t["number"]: t for t in fo["threats"] if isinstance(t["number"], int)}
+    tn = {}
+    res = {"violations": [], "warnings": [], "addedThreats": [], "removedThreats": [], "changedThreats": [],
+           "addedElements": [], "removedElements": [], "addedFlows": [], "removedFlows": []}
+    for t in fn["threats"]:
+        n = t["number"]
+        if not isinstance(n, int):
+            res["violations"].append("a threat ('%s') has no number" % t["title"])
+        elif n in tn:
+            res["violations"].append("%s is used by two threats ('%s' and '%s')" % (tid(n), tn[n]["title"], t["title"]))
+        else:
+            tn[n] = t
+    top_old = (old.get("detail") or {}).get("threatTop") or 0
+    top_new = (new.get("detail") or {}).get("threatTop") or 0
+    if top_new < top_old:
+        res["violations"].append("threatTop went down (%d -> %d): ids of deleted threats could be reused" % (top_old, top_new))
+    for n in sorted(tn):
+        t = tn[n]
+        o = to.get(n)
+        if o is None:
+            if n <= max(top_old, max(to) if to else 0):
+                res["violations"].append("%s '%s' reuses or backfills an id from the base model" % (tid(n), t["title"]))
+            res["addedThreats"].append({"tid": tid(n), "title": t["title"], "severity": t["severity"],
+                                        "element": t["element"], "status": t["status"]})
+            continue
+        same_target = name_key(o["element"]) == name_key(t["element"])
+        same_title = name_key(o["title"]) == name_key(t["title"])
+        same_cat = o["category"] == t["category"]
+        if not same_target and not same_title:
+            res["violations"].append("%s now describes a different threat: '%s' on '%s' was '%s' on '%s'" % (
+                tid(n), t["title"], t["element"], o["title"], o["element"]))
+            continue
+        ch = {}
+        for k in ("title", "element", "category", "severity", "status"):
+            if o[k] != t[k]:
+                ch[k] = [o[k], t[k]]
+        if ch:
+            res["changedThreats"].append({"tid": tid(n), "title": t["title"], "changes": ch})
+            if not same_cat:
+                res["warnings"].append("%s changed STRIDE category %s -> %s" % (tid(n), o["category"], t["category"]))
+    for n in sorted(to):
+        if n not in tn:
+            res["removedThreats"].append({"tid": tid(n), "title": to[n]["title"], "element": to[n]["element"]})
+    ek = lambda e: name_key(e["name"])
+    eo, en = {ek(e): e for e in fo["elements"]}, {ek(e): e for e in fn["elements"]}
+    res["addedElements"] = [{"name": en[k]["name"], "type": en[k]["type"], "boundary": en[k]["boundary"]} for k in en if k not in eo]
+    res["removedElements"] = [{"name": eo[k]["name"], "type": eo[k]["type"]} for k in eo if k not in en]
+    fk = lambda f: (name_key(f["from"]), name_key(f["to"]), name_key(f["name"]))
+    flo, fln = {fk(f): f for f in fo["flows"]}, {fk(f): f for f in fn["flows"]}
+    res["addedFlows"] = [{"name": fln[k]["name"], "from": fln[k]["from"], "to": fln[k]["to"],
+                          "crossesBoundary": fln[k]["crossesBoundary"]} for k in fln if k not in flo]
+    res["removedFlows"] = [{"name": flo[k]["name"], "from": flo[k]["from"], "to": flo[k]["to"]} for k in flo if k not in fln]
+    if res["removedThreats"]:
+        res["warnings"].append("%d threat(s) removed: confirm a human deleted them on purpose (%s)" % (
+            len(res["removedThreats"]), ", ".join(x["tid"] for x in res["removedThreats"])))
+    if res["removedElements"]:
+        res["warnings"].append("%d element(s) removed or renamed (%s); threats are matched by id, but check the model still reflects the system" % (
+            len(res["removedElements"]), ", ".join(x["name"] for x in res["removedElements"])))
+    return res
+
+
+def cmd_diff(args):
+    new = load_json(args.new)
+    if args.old:
+        old = load_json(args.old)
+    else:
+        ref = args.base or "HEAD"
+        old = _git_show(ref, args.new)
+        if old is None:
+            print("No base model: %s is not present at %s (new model, nothing to compare)." % (args.new, ref))
+            return 0
+    res = compare_models(old, new)
+    fails = list(res["violations"]) + (res["warnings"] if args.strict else [])
+    if args.format == "json":
+        res["ok"] = not fails
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+        return 1 if fails else 0
+    L = ["# Threat model id check: %s" % args.new, ""]
+    if res["violations"]:
+        L += ["## Violations (pinned ids broken)"] + ["- %s" % v for v in res["violations"]] + [""]
+    if res["warnings"]:
+        L += ["## Warnings"] + ["- %s" % w for w in res["warnings"]] + [""]
+    def sec(name, rows, fmt):
+        if rows:
+            L.extend(["## " + name] + ["- " + fmt(r) for r in rows] + [""])
+    sec("Threats added", res["addedThreats"], lambda r: "%s [%s, %s] %s (on %s)" % (r["tid"], r["severity"], r["status"], r["title"], r["element"]))
+    sec("Threats removed", res["removedThreats"], lambda r: "%s %s (on %s)" % (r["tid"], r["title"], r["element"]))
+    sec("Threats changed", res["changedThreats"], lambda r: "%s %s: %s" % (r["tid"], r["title"], "; ".join("%s %s -> %s" % (k, v[0], v[1]) for k, v in r["changes"].items())))
+    sec("Elements added", res["addedElements"], lambda r: "%s (%s, boundary: %s)" % (r["name"], r["type"], r["boundary"] or "none"))
+    sec("Elements removed", res["removedElements"], lambda r: "%s (%s)" % (r["name"], r["type"]))
+    sec("Flows added", res["addedFlows"], lambda r: "%s -> %s%s" % (r["from"], r["to"], " (crosses a trust boundary)" if r["crossesBoundary"] else ""))
+    sec("Flows removed", res["removedFlows"], lambda r: "%s -> %s" % (r["from"], r["to"]))
+    if len(L) == 2:
+        L.append("No differences.")
+    L.append("RESULT: %s" % ("FAIL" if fails else "OK"))
+    print("\n".join(L))
+    return 1 if fails else 0
+
+
 # ---------------------------------------------------------------- stats
 def cmd_stats(args):
     model = load_json(args.model)
@@ -823,6 +946,7 @@ def main(argv=None):
     b = sub.add_parser("build", help="spec -> new Threat Dragon model")
     b.add_argument("spec"); b.add_argument("out")
     b.add_argument("--no-log", action="store_true", help="do not write the .draft-log.json sidecar")
+    b.add_argument("--force", action="store_true", help="overwrite an existing model (renumbers threats!)")
     e = sub.add_parser("extend", help="add a delta spec to an existing model")
     e.add_argument("model"); e.add_argument("delta"); e.add_argument("-o", "--out")
     e.add_argument("--diagram", type=int, default=0, help="index of the diagram to extend (default 0)")
@@ -835,11 +959,16 @@ def main(argv=None):
     s = sub.add_parser("set-status", help="change a threat's status")
     s.add_argument("model"); s.add_argument("--threat", required=True); s.add_argument("--status", required=True)
     s.add_argument("--note")
+    d = sub.add_parser("diff", help="compare model versions by pinned threat id (CI integrity check)")
+    d.add_argument("new"); d.add_argument("old", nargs="?", help="older model file (default: NEW as of --base)")
+    d.add_argument("--base", help="git ref to read the old model from (default HEAD)")
+    d.add_argument("--format", choices=["md", "json"], default="md")
+    d.add_argument("--strict", action="store_true", help="also fail on warnings (removed threats/elements)")
     st = sub.add_parser("stats", help="counts and AI-draft keep rate")
     st.add_argument("model"); st.add_argument("--draft-log")
     args = ap.parse_args(argv)
     handlers = {"build": cmd_build, "extend": cmd_extend, "validate": cmd_validate, "extract": cmd_extract,
-                "set-status": cmd_set_status, "stats": cmd_stats}
+                "set-status": cmd_set_status, "diff": cmd_diff, "stats": cmd_stats}
     if not args.cmd:
         ap.print_help()
         return 2
